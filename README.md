@@ -1,6 +1,6 @@
 # nodepayai
 nodepay.ai签到 100% 在线免费 Python3
-
+通过我的RF注册：https://app.nodepay.ai/register?ref=PMLZWyjtnh4r9Ki
 # 功能
 服务器挂机使用，不用多ip切换。
 
