@@ -10,15 +10,23 @@ nodepay.ai签到 100% 在线免费 Python3
 "打印的文本是 NP_TOKEN"
 
 # 运行代码的步骤 -
-在运行脚本之前，确保你的计算机上已安装 Python。然后，使用以下命令安装必要的 Python 包：
+## 1、获取相关的代码
+np_token 获取：chrome f12 进入开发中心，然后找到网络：device-networks 这样的标签。找到 authorization:里面的代码就可以了，千万别复制：Bearer
+
+cookies 获取：chrome f12 进入开发中心，然后找到网络：device-networks 这样的标签。找到 cookie:里面的代码就可以了
+
+## 2、安装组件
 ```bash
-cd nodepay
 pip install -r requirements.txt
 ```
-在“node.py”文件行“``9```中以正确的格式替换“NP TOken”列表。
-运行脚本 ``python3 node.py``
-要运行多个用户 ID，只需复制粘贴 node.py 文件代码并创建新 Python 文件并重复该过程！！
-注意 - 1 个 IP == 每天 1000-1400 $Nodepay。
+
+## 3、运行
+```bash
+python3 nodepay.py
+```
+
+一行一个号，一个号对应一个cookies..................
+
 
 
 # 运行情况
