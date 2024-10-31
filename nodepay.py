@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 import time
 import uuid
+import cloudscraper  # 引入 cloudscraper
 from loguru import logger
 
 
@@ -30,7 +31,7 @@ def show_copyright():
 # Constants
 PING_INTERVAL = 60  # 每分钟发送一次请求
 RETRIES = 60  # 全局重试计数
-TOKEN_FILE = 'np_tokens.txt'  # 令牌文件名
+TOKEN_FILE = 'np_tokens_1.txt'  # 令牌文件名
 
 DOMAIN_API = {
     "SESSION": "https://api.nodepay.org/api/auth/session",
@@ -66,6 +67,8 @@ async def render_profile_info(proxy, token):
         np_session_info = load_session_info(proxy)
 
         if not np_session_info:
+            # 生成新的 browser_id
+            browser_id = uuidv4()
             response = await call_api(DOMAIN_API["SESSION"], {}, proxy, token)
             valid_resp(response)
             account_info = response["data"]
@@ -99,14 +102,20 @@ async def call_api(url, data, proxy, token):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
         "Accept": "application/json",
         "Accept-Language": "en-US,en;q=0.5",
-        "Referer": "https://your-referer-url.com",
+        "Referer": "https://app.nodepay.ai",
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=headers, proxy=proxy, timeout=10) as response:
-                response.raise_for_status()
-                return valid_resp(await response.json())
+        # 使用 cloudscraper 创建会话
+        scraper = cloudscraper.create_scraper()
+
+        # 使用 cloudscraper 发起请求
+        response = scraper.post(url, json=data, headers=headers, proxies={
+                                "http": proxy, "https": proxy}, timeout=10)
+
+        # 检查响应状态码
+        response.raise_for_status()
+        return valid_resp(response.json())
     except Exception as e:
         logger.error(f"Error during API call: {e}")
         raise ValueError(f"Failed API call to {url}")
@@ -140,7 +149,7 @@ async def ping(proxy, token):
     try:
         data = {
             "id": account_info.get("uid"),
-            "browser_id": browser_id,
+            "browser_id": browser_id,  # 使用当前的 browser_id
             "timestamp": int(time.time())
         }
 
@@ -192,7 +201,13 @@ def save_status(proxy, status):
 
 
 def save_session_info(proxy, data):
-    pass  # 这里可以添加保存会话信息的逻辑
+    # 将 browser_id 也保存到会话信息中
+    data_to_save = {
+        "uid": data.get("uid"),
+        "browser_id": browser_id  # 保存 browser_id
+    }
+    # 这里可以添加保存逻辑，例如写入文件或数据库
+    pass
 
 
 def load_session_info(proxy):
@@ -218,7 +233,7 @@ def load_tokens_from_file(filename):
 
 
 async def main():
-    all_proxies = load_proxies('proxy.txt')  # 从文件加载代理
+    all_proxies = load_proxies('proxy_1.txt')  # 从文件加载代理
     tokens = load_tokens_from_file(TOKEN_FILE)  # 从文件加载令牌
 
     while True:
@@ -253,10 +268,9 @@ async def main():
             await asyncio.sleep(3)
         await asyncio.sleep(10)  # 在处理下一个令牌之前等待
 
-
+# 主程序入口
 if __name__ == '__main__':
     show_copyright()
-    # 在这里放置你的主逻辑
     print("Welcome to the main program!")
     try:
         asyncio.run(main())
