@@ -1,1 +1,4 @@
-requirements
+cloudscraper
+aiohttp
+loguru
+requests
