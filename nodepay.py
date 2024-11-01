@@ -2,8 +2,10 @@ import asyncio
 import aiohttp
 import time
 import uuid
-import cloudscraper  # 引入 cloudscraper
 from loguru import logger
+import sys
+import logging
+logging.disable(logging.ERROR)  # 禁用 ERROR 及以上级别的日志
 
 
 def show_copyright():
@@ -29,8 +31,8 @@ def show_copyright():
 
 
 # Constants
-PING_INTERVAL = 60  # 每分钟发送一次请求
-RETRIES = 60  # 全局重试计数
+PING_INTERVAL = 180  # 每分钟发送一次请求
+RETRIES = 120  # 全局重试计数
 TOKEN_FILE = 'np_tokens_1.txt'  # 令牌文件名
 
 DOMAIN_API = {
@@ -47,7 +49,7 @@ CONNECTION_STATES = {
 status_connect = CONNECTION_STATES["NONE_CONNECTION"]
 browser_id = None
 account_info = {}
-last_ping_time = {}  # 使用字典来记录每个代理的最后 ping 时间
+last_ping_time = {}
 
 
 def uuidv4():
@@ -67,9 +69,11 @@ async def render_profile_info(proxy, token):
         np_session_info = load_session_info(proxy)
 
         if not np_session_info:
-            # 生成新的 browser_id
             browser_id = uuidv4()
             response = await call_api(DOMAIN_API["SESSION"], {}, proxy, token)
+            if response is None:
+                logger.info(f"Skipping proxy {proxy} due to 403 error.")
+                return  # 跳过当前代理
             valid_resp(response)
             account_info = response["data"]
             if account_info.get("uid"):
@@ -82,20 +86,9 @@ async def render_profile_info(proxy, token):
             await start_ping(proxy, token)
     except Exception as e:
         logger.error(f"Error in render_profile_info for proxy {proxy}: {e}")
-        error_message = str(e)
-        if any(phrase in error_message for phrase in [
-            "sent 1011 (internal error) keepalive ping timeout; no close frame received",
-            "500 Internal Server Error"
-        ]):
-            logger.info(f"Removing error proxy from the list: {proxy}")
-            remove_proxy_from_list(proxy)
-            return None
-        else:
-            logger.error(f"Connection error: {e}")
-            return proxy
 
 
-async def call_api(url, data, proxy, token):
+async def call_api(url, data, proxy, token, max_retries=3):
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -103,22 +96,39 @@ async def call_api(url, data, proxy, token):
         "Accept": "application/json",
         "Accept-Language": "en-US,en;q=0.5",
         "Referer": "https://app.nodepay.ai",
+        "Cookie": "__cf_bm=eLgxJdCy9oYdaH6lDYpX.igutO9m0hwvgv3em1uwGss-1730430111-1.0.1.1-0JTC9oIoIBkgfju12eTJWqzShzNIPJcGdc97dBM6qnUQOZd9t4o.OR0hUfspTYLwNnSQ7psrP_ZwhuQgjp_jcw",
     }
 
-    try:
-        # 使用 cloudscraper 创建会话
-        scraper = cloudscraper.create_scraper()
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True)) as session:
+        for attempt in range(max_retries):
+            try:
+                async with session.post(url, json=data, headers=headers, proxy=proxy, timeout=10) as response:
+                    response.raise_for_status()  # Raise error for HTTP error responses
+                    resp_json = await response.json()
+                    return valid_resp(resp_json)
 
-        # 使用 cloudscraper 发起请求
-        response = scraper.post(url, json=data, headers=headers, proxies={
-                                "http": proxy, "https": proxy}, timeout=10)
+            except aiohttp.ClientResponseError as e:
+                logger.error(f"API call error on attempt {
+                             attempt + 1} for proxy {proxy}: {e}")
+                if e.status == 403:
+                    logger.error(f"403 Forbidden encountered on attempt {
+                                 attempt + 1}: {e}")
+                    return None  # Skip this proxy
+            except aiohttp.ClientConnectionError as e:
+                logger.error(f"Connection error on attempt {
+                             attempt + 1} for proxy {proxy}: {e}")
+            except aiohttp.Timeout as e:
+                logger.error(f"Timeout on attempt {
+                             attempt + 1} for proxy {proxy}: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error on attempt {
+                             attempt + 1} for proxy {proxy}: {e}")
 
-        # 检查响应状态码
-        response.raise_for_status()
-        return valid_resp(response.json())
-    except Exception as e:
-        logger.error(f"Error during API call: {e}")
-        raise ValueError(f"Failed API call to {url}")
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
+    logger.error(f"Failed API call to {url} after {
+                 max_retries} attempts with proxy {proxy}")
+    return None
 
 
 async def start_ping(proxy, token):
@@ -136,20 +146,17 @@ async def ping(proxy, token):
     global last_ping_time, RETRIES, status_connect
 
     current_time = time.time()
-
-    # 检查是否距离上次ping已经过去了指定的间隔
     if proxy in last_ping_time and (current_time - last_ping_time[proxy]) < PING_INTERVAL:
         logger.info(f"Skipping ping for proxy {
                     proxy}, not enough time elapsed")
         return
 
-    # 更新上次ping的时间
     last_ping_time[proxy] = current_time
 
     try:
         data = {
             "id": account_info.get("uid"),
-            "browser_id": browser_id,  # 使用当前的 browser_id
+            "browser_id": browser_id,
             "timestamp": int(time.time())
         }
 
@@ -197,29 +204,27 @@ def load_proxies(proxy_file):
 
 
 def save_status(proxy, status):
-    pass  # 这里可以添加保存状态的逻辑
+    pass
 
 
 def save_session_info(proxy, data):
-    # 将 browser_id 也保存到会话信息中
     data_to_save = {
         "uid": data.get("uid"),
-        "browser_id": browser_id  # 保存 browser_id
+        "browser_id": browser_id
     }
-    # 这里可以添加保存逻辑，例如写入文件或数据库
     pass
 
 
 def load_session_info(proxy):
-    return {}  # 这里可以加载会话信息
+    return {}
 
 
 def is_valid_proxy(proxy):
-    return True  # 这里可以验证代理的有效性
+    return True
 
 
 def remove_proxy_from_list(proxy):
-    pass  # 这里可以移除代理的逻辑
+    pass
 
 
 def load_tokens_from_file(filename):
@@ -232,9 +237,35 @@ def load_tokens_from_file(filename):
         raise SystemExit("Exiting due to failure in loading tokens")
 
 
+async def send_data_to_server(url, data, token):
+    # 在此函数中调用 call_api 来发送数据
+    proxy = None  # 这里可以根据需要选择代理
+    response = await call_api(url, data, proxy, token)
+
+    if response is not None:
+        logger.info(f"Response received: {response}")
+    else:
+        logger.error("Failed to receive response.")
+
+
 async def main():
-    all_proxies = load_proxies('proxy_1.txt')  # 从文件加载代理
-    tokens = load_tokens_from_file(TOKEN_FILE)  # 从文件加载令牌
+    show_copyright()  # 在程序主循环之前显示版权信息
+    print("Welcome to the main program!")
+
+    url = "https://api.nodepay.org/api/auth/session"  # 替换为你的 API 端点
+    data = {
+        "cache-control": "no-cache, no-store, max-age=0, must-revalidate",  # 替换为你的数据
+        "cf-cache-status": "DYNAMIC",
+        "cf-ray": "8db8aaa27b6fd487-NRT",
+        "ary": "origin,access-control-request-method,access-control-request-headers,accept-encoding",
+    }
+
+    all_proxies = load_proxies('proxy_1.txt')
+    tokens = load_tokens_from_file(TOKEN_FILE)
+
+    for token in tokens:
+        await send_data_to_server(url, data, token)
+        await asyncio.sleep(10)  # 在发送完每个请求后等待一段时间
 
     while True:
         for token in tokens:
@@ -264,14 +295,11 @@ async def main():
                     render_profile_info(proxy, token))
                 tasks[new_task] = proxy
 
-            # 防止快速失败导致的紧密循环
             await asyncio.sleep(3)
-        await asyncio.sleep(10)  # 在处理下一个令牌之前等待
+        await asyncio.sleep(10)
 
-# 主程序入口
+
 if __name__ == '__main__':
-    show_copyright()
-    print("Welcome to the main program!")
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
